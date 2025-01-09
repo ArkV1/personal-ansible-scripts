@@ -1,0 +1,155 @@
+---
+- name: openSUSE Post-Installation Configuration
+  hosts: all
+  become: yes  # This enables sudo privileges
+  vars_files:
+    - vars/main.yml
+
+  pre_tasks:
+    - name: Check if system is openSUSE
+      command: cat /etc/os-release
+      register: os_release
+      changed_when: false
+
+    - name: Verify system is openSUSE
+      fail:
+        msg: "This playbook is designed for openSUSE systems only"
+      when: "'opensuse' not in os_release.stdout.lower()"
+
+    - name: Detect encrypted partitions
+      shell: |
+        lsblk -f | grep "crypto_LUKS" | awk '{print $1}' | sed 's/└─//' | sed 's/├─//'
+      register: encrypted_partitions
+      changed_when: false
+      when: encrypted_partition is not defined
+
+    - name: Set encrypted partition fact if detected
+      set_fact:
+        detected_encrypted_partition: "/dev/{{ encrypted_partitions.stdout_lines[0] }}"
+      when: encrypted_partition is not defined and encrypted_partitions.stdout_lines | length > 0
+
+    - name: Show detected encrypted partition
+      debug:
+        msg: "Detected encrypted partition: {{ detected_encrypted_partition }}"
+      when: detected_encrypted_partition is defined
+
+    - name: Prompt for LUKS passphrase if not provided
+      pause:
+        prompt: "Enter the current LUKS passphrase for {{ encrypted_partition | default(detected_encrypted_partition) }}"
+        echo: no
+      register: luks_passphrase_prompt
+      when: luks_passphrase is not defined
+      no_log: true
+
+    - name: Set LUKS passphrase fact if prompted
+      set_fact:
+        luks_passphrase: "{{ luks_passphrase_prompt.user_input }}"
+      when: luks_passphrase is not defined and luks_passphrase_prompt is defined
+      no_log: true
+
+    - name: Check if snapper is installed
+      command: which snapper
+      register: snapper_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check current snapshot configuration
+      command: snapper -c root get-config
+      register: snapper_config
+      changed_when: false
+      failed_when: false
+      when: snapper_check.rc == 0
+
+  tasks:
+    - name: Disable YaST snapshots
+      lineinfile:
+        path: /etc/sysconfig/yast2
+        regexp: '^USE_SNAPPER='
+        line: 'USE_SNAPPER=no'
+        create: yes
+      when: snapper_check.rc == 0
+
+    - name: Remove snapper-zypp-plugin
+      zypper:
+        name: snapper-zypp-plugin
+        state: absent
+        clean_deps: yes
+      when: snapper_check.rc == 0
+
+    - name: Get list of snapshots
+      command: snapper list
+      register: snapper_list
+      changed_when: false
+      ignore_errors: yes
+      when: snapper_check.rc == 0
+
+    - name: Show current snapshots
+      debug:
+        msg: "{{ snapper_list.stdout_lines }}"
+      when: snapper_check.rc == 0 and snapper_list.rc == 0
+
+    - name: Disable timeline snapshots
+      command: snapper -c root set-config "TIMELINE_CREATE=no"
+      when: snapper_check.rc == 0 and snapper_list.rc == 0
+
+    - name: Create keys directory
+      file:
+        path: /etc/keys
+        state: directory
+        mode: '0700'
+
+    - name: Check if encryption key already exists
+      stat:
+        path: /etc/keys/enc.key
+      register: key_file
+
+    - name: Prompt before overwriting existing key
+      pause:
+        prompt: "Encryption key file already exists. Do you want to overwrite it? (yes/no)"
+      register: overwrite_prompt
+      when: key_file.stat.exists
+
+    - name: Create encryption key file
+      file:
+        path: /etc/keys/enc.key
+        state: touch
+        mode: '0600'
+      when: not key_file.stat.exists or (overwrite_prompt.user_input | default('no') | lower == 'yes')
+
+    - name: Generate random key
+      command: dd if=/dev/urandom of=/etc/keys/enc.key bs=1024 count=1
+      args:
+        creates: /etc/keys/enc.key
+      when: not key_file.stat.exists or (overwrite_prompt.user_input | default('no') | lower == 'yes')
+
+    - name: Add key to encrypted partition
+      command: "cryptsetup luksAddKey {{ encrypted_partition | default(detected_encrypted_partition) }} /etc/keys/enc.key"
+      args:
+        stdin: "{{ luks_passphrase }}"
+      when: (encrypted_partition is defined or detected_encrypted_partition is defined) and (not key_file.stat.exists or (overwrite_prompt.user_input | default('no') | lower == 'yes'))
+      no_log: true
+
+    - name: Configure dracut to include key file
+      copy:
+        content: 'install_items+=" /etc/keys/enc.key "'
+        dest: /etc/dracut.conf.d/99-root-key.conf
+        mode: '0644'
+
+    - name: Check if dracut rebuild is needed
+      command: lsinitrd | grep '/etc/keys/enc.key'
+      register: dracut_check
+      changed_when: false
+      failed_when: false
+
+    - name: Rebuild initrd
+      command: dracut -f
+      when: dracut_check.rc != 0
+
+  post_tasks:
+    - name: Display completion summary
+      debug:
+        msg:
+          - "Post-installation configuration completed:"
+          - "{% if snapper_check.rc == 0 %}✓ Snapper configuration updated{% else %}- Snapper not installed{% endif %}"
+          - "{% if encrypted_partition is defined or detected_encrypted_partition is defined %}✓ Encryption key setup completed{% else %}- No encrypted partition configured{% endif %}"
+          - "{% if dracut_check.rc != 0 %}✓ Initrd rebuilt{% else %}- Initrd already up to date{% endif %}" 

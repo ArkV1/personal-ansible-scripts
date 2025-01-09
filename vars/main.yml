@@ -1,0 +1,7 @@
+---
+# The encrypted partition device path (e.g., /dev/sda1)
+# encrypted_partition: /dev/sda1
+
+# LUKS passphrase for the encrypted partition
+# This should be provided securely, preferably through ansible-vault
+# luks_passphrase: your_current_passphrase 

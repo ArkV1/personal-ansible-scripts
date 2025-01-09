@@ -1,0 +1,19 @@
+# OpenSUSE Hosts Inventory
+# Replace the examples below with your actual host information
+
+# Single host example:
+# laptop ansible_host=192.168.1.100 ansible_user=your_username
+
+# Multiple hosts example:
+# [opensuse_laptops]
+# laptop1 ansible_host=192.168.1.101 ansible_user=user1
+# laptop2 ansible_host=192.168.1.102 ansible_user=user2
+
+# Group variables example:
+# [opensuse_laptops:vars]
+# ansible_python_interpreter=/usr/bin/python3
+
+# For local execution (running on the same machine):
+#localhost ansible_connection=local 
+
+# laptop ansible_host=192.168.1.50 ansible_user=ark
