@@ -16,4 +16,5 @@
 # For local execution (running on the same machine):
 #localhost ansible_connection=local 
 
-# laptop ansible_host=192.168.1.50 ansible_user=ark
+[opensuse]
+laptop ansible_host=192.168.1.243 ansible_user=ArkV1 ansible_connection=ssh ansible_ssh_pass=dev1

@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  ansible:
+    build: .
+    volumes:
+      - .:/ansible/playbooks
+      - ~/.ssh:/home/ansible/.ssh:ro
+    environment:
+      - ANSIBLE_HOST_KEY_CHECKING=False
+    tty: true
+    stdin_open: true 
